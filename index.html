@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+
+<!-- ▼ PWA対応（④） -->
+<link rel="manifest" href="manifest.json">
+<meta name="theme-color" content="#121212">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
+
+<title>Gacha System</title>
+
+<style>
+body {
+  margin:0;
+  font-family: "Segoe UI", sans-serif;
+  background: radial-gradient(circle at top, #2b2b2b, #121212);
+  color:#eee;
+}
+
+header {
+  text-align:center;
+  padding:15px;
+  background:linear-gradient(90deg,#111,#222);
+  font-weight:bold;
+}
+
+.nav {
+  display:flex;
+  justify-content:center;
+  gap:10px;
+  padding:10px;
+}
+
+.screen { display:none; padding:12px; }
+.active { display:block; }
+
+button {
+  border:none;
+  border-radius:12px;
+  padding:12px;
+  color:#fff;
+  background:linear-gradient(145deg,#3a3a3a,#222);
+}
+
+.primary {
+  background:linear-gradient(145deg,#4f8cff,#1d4ed8);
+}
+
+input, select, textarea {
+  width:100%;
+  padding:10px;
+  border-radius:10px;
+  border:1px solid #444;
+  background:#111;
+  color:#fff;
+  margin-bottom:10px;
+}
+
+.card {
+  background:#2a2a2a;
+  padding:10px;
+  border-radius:10px;
+  margin-bottom:10px;
+}
+
+.result-item {
+  display:flex;
+  justify-content:space-between;
+  padding:12px;
+  margin:6px 0;
+  border-radius:10px;
+  background:#1c1c1c;
+}
+
+.rarity-UR { border:2px solid #a855f7; }
+.rarity-SSR { border:2px solid #d4af37; }
+.rarity-SR { border:2px solid #3b82f6; }
+.rarity-R { border:2px solid #22c55e; }
+.rarity-N { border:2px solid #666; }
+
+.log {
+  font-size:12px;
+  padding:6px;
+  border-bottom:1px solid #333;
+}
+
+.modal {
+  position:fixed;
+  top:0; left:0;
+  width:100%; height:100%;
+  display:none;
+  justify-content:center;
+  align-items:center;
+  background:rgba(0,0,0,0.7);
+}
+
+.modal-content {
+  background:#2a2a2a;
+  padding:20px;
+  border-radius:10px;
+  width:90%;
+}
+</style>
+</head>
+
+<body>
+
+<header>Gacha System</header>
+
+<div class="nav">
+  <button onclick="showScreen('gacha')">ガチャ</button>
+  <button onclick="showScreen('admin')">管理</button>
+  <button onclick="showScreen('log')">履歴</button>
+</div>
+
+<!-- ガチャ -->
+<div id="gacha" class="screen active">
+<input id="username" placeholder="名前">
+
+<button class="primary" onclick="draw(1)">単発</button>
+<button onclick="draw(5)">5連</button>
+<button onclick="draw(10)">10連</button>
+
+<input id="count" type="number" placeholder="回数入力">
+<button onclick="customDraw()">回す</button>
+
+<div id="result"></div>
+
+<textarea id="shareText" rows="6"></textarea>
+<button onclick="copyResult()">コピー</button>
+<button onclick="postToX()">Xに投稿</button>
+</div>
+
+<!-- 管理 -->
+<div id="admin" class="screen">
+<button class="primary" onclick="openModal()">＋追加</button>
+<button onclick="clearAll()">全削除</button>
+<div id="list"></div>
+</div>
+
+<!-- 履歴 -->
+<div id="log" class="screen">
+<button onclick="clearLog()">履歴削除</button>
+<div id="logList"></div>
+</div>
+
+<!-- モーダル -->
+<div id="modal" class="modal">
+<div class="modal-content">
+<input id="name" placeholder="商品名">
+
+<select id="rarity">
+<option>UR</option>
+<option>SSR</option>
+<option>SR</option>
+<option>R</option>
+<option>N</option>
+</select>
+
+<input id="weight" type="number" placeholder="重み">
+<input id="stock" type="number" placeholder="在庫(-1で∞)">
+
+<button class="primary" onclick="saveItem()">保存</button>
+<button onclick="closeModal()">閉じる</button>
+</div>
+</div>
+
+<script>
+let items = JSON.parse(localStorage.getItem("gacha")) || [];
+let logs = JSON.parse(localStorage.getItem("gachaLog")) || [];
+let editIndex = null;
+
+function showScreen(id){
+  document.querySelectorAll(".screen").forEach(s=>s.classList.remove("active"));
+  document.getElementById(id).classList.add("active");
+}
+
+function rarityOrder(r){
+  const order={UR:1,SSR:2,SR:3,R:4,N:5};
+  return order[r]||999;
+}
+
+function render(){
+  list.innerHTML="";
+  items.forEach((item,i)=>{
+    const stockText = item.stock===-1?"∞":item.stock;
+
+    list.innerHTML+=`
+    <div class="card rarity-${item.rarity}">
+      [${item.rarity}] ${item.name}<br>
+      ${item.weight} / ${stockText}<br>
+      <button onclick="editItem(${i})">編集</button>
+      <button onclick="deleteItem(${i})">削除</button>
+    </div>`;
+  });
+}
+
+function openModal(){
+  editIndex=null;
+  name.value="";weight.value="";stock.value="";
+  modal.style.display="flex";
+}
+function closeModal(){ modal.style.display="none"; }
+
+function saveItem(){
+  const n=name.value.trim();
+  const r=rarity.value;
+  const w=Number(weight.value);
+  let s=stock.value;
+
+  if(s==="") s=-1;
+  s=Number(s);
+
+  if(!n||isNaN(w)||w<=0) return alert("入力エラー");
+
+  const data={name:n,rarity:r,weight:w,stock:s};
+
+  if(editIndex===null) items.push(data);
+  else items[editIndex]=data;
+
+  localStorage.setItem("gacha",JSON.stringify(items));
+  editIndex=null;
+  closeModal();
+  render();
+}
+
+function editItem(i){
+  const item=items[i];
+  name.value=item.name;
+  rarity.value=item.rarity;
+  weight.value=item.weight;
+  stock.value=item.stock;
+  editIndex=i;
+  modal.style.display="flex";
+}
+
+function deleteItem(i){
+  if(!confirm("削除しますか？")) return;
+  items.splice(i,1);
+  localStorage.setItem("gacha",JSON.stringify(items));
+  render();
+}
+
+function drawOne(){
+  const total=items.reduce((s,i)=>s+i.weight,0);
+  let r=Math.random()*total;
+  for(let item of items){
+    r-=item.weight;
+    if(r<=0) return item;
+  }
+}
+
+function draw(count){
+  const user=username.value.trim();
+  if(!user) return alert("名前入力");
+
+  let map={};
+
+  for(let i=0;i<count;i++){
+    const item=drawOne();
+    if(!item) continue;
+
+    const key=item.name+"_"+item.rarity;
+    if(!map[key]) map[key]={...item,count:0};
+    map[key].count++;
+  }
+
+  const results=Object.values(map)
+    .sort((a,b)=>rarityOrder(a.rarity)-rarityOrder(b.rarity));
+
+  let html="";
+  results.forEach(r=>{
+    html+=`
+    <div class="result-item rarity-${r.rarity}">
+      <div>${r.rarity} ${r.name}</div>
+      <div>×${r.count}</div>
+    </div>`;
+  });
+
+  result.innerHTML=html;
+
+  let text="【ガチャ結果】\n名前："+user+"\n回数："+count+"連\n\n";
+  results.forEach(r=>{
+    text+=r.rarity+"："+r.name+" ×"+r.count+"\n";
+  });
+  text+="\n#ガチャ #結果";
+
+  shareText.value=text;
+
+  saveLog(user,count,text);
+}
+
+function copyResult(){
+  navigator.clipboard.writeText(shareText.value);
+  alert("コピーしました");
+}
+
+function postToX(){
+  const text=encodeURIComponent(shareText.value);
+  window.open("https://twitter.com/intent/tweet?text="+text,"_blank");
+}
+
+function saveLog(user,count,text){
+  logs.unshift({time:new Date().toLocaleString(),user,count,text});
+  if(logs.length>50) logs.pop();
+  localStorage.setItem("gachaLog",JSON.stringify(logs));
+  renderLog();
+}
+
+function renderLog(){
+  logList.innerHTML="";
+  logs.forEach(l=>{
+    logList.innerHTML+=`
+    <div class="log">
+      ${l.time} / ${l.user}（${l.count}回）<br>
+      <pre>${l.text}</pre>
+    </div>`;
+  });
+}
+
+function clearLog(){
+  logs=[];localStorage.removeItem("gachaLog");renderLog();
+}
+
+function clearAll(){
+  items=[];localStorage.removeItem("gacha");render();
+}
+
+function customDraw(){
+  const c=Number(count.value);
+  if(!c) return alert("回数入力");
+  draw(c);
+}
+
+render();
+renderLog();
+</script>
+
+<!-- ▼ Service Worker登録（④） -->
+<script>
+if ("serviceWorker" in navigator) {
+  navigator.serviceWorker.register("service-worker.js")
+    .then(()=>console.log("SW登録成功"))
+    .catch(err=>console.log("SW登録失敗", err));
+}
+</script>
+
+</body>
+</html>
